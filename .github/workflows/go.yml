@@ -1,0 +1,50 @@
+# Managed by curate: do not edit.
+
+name: Go
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  build_and_test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: "stable"
+
+      - name: Build
+        run: go build ./...
+
+      - name: Test
+        run: go test -race ./...
+
+      - name: Test with the go.mod go version
+        run: GOTOOLCHAIN="go$(go list -m -f '{{.GoVersion}}')" go test -race ./...
+
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: "stable"
+
+      - name: Measure Coverage
+        run: go test -short -covermode=atomic -coverprofile=coverage.out ./...
+
+      - name: Upload Coverage
+        uses: codecov/codecov-action@v7
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          file: ./coverage.out
+          flags: go
+          fail_ci_if_error: true
