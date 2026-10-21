@@ -28,7 +28,7 @@ func TestReadHeader(t *testing.T) {
 		assert.True(t, h.FlagFIN())
 		assert.Equal(t, uint8(OpcodeText), h.Opcode())
 		assert.False(t, h.FlagMask())
-		assert.Equal(t, uint64(5), h.Length())
+		assert.Equal(t, uint64(5), h.PayloadLen())
 	})
 
 	t.Run("short masked text frame", func(t *testing.T) {
@@ -36,7 +36,7 @@ func TestReadHeader(t *testing.T) {
 		h, err := readHeaderFrom([]byte{0x81, 0x85, 0xAA, 0xBB, 0xCC, 0xDD})
 		assert.NoError(t, err)
 		assert.True(t, h.FlagMask())
-		assert.Equal(t, uint64(5), h.Length())
+		assert.Equal(t, uint64(5), h.PayloadLen())
 		mask, merr := h.Mask()
 		assert.NoError(t, merr)
 		assert.Equal(t, [4]byte{0xAA, 0xBB, 0xCC, 0xDD}, mask)
@@ -46,7 +46,7 @@ func TestReadHeader(t *testing.T) {
 		// FIN=1, opcode=text, MASK=0, len=0
 		h, err := readHeaderFrom([]byte{0x81, 0x00})
 		assert.NoError(t, err)
-		assert.Equal(t, uint64(0), h.Length())
+		assert.Equal(t, uint64(0), h.PayloadLen())
 	})
 
 	// --- success: medium (16-bit extended length) ---
@@ -55,7 +55,7 @@ func TestReadHeader(t *testing.T) {
 		// FIN=1, opcode=text, MASK=0, len0=126, extended=300 (0x012C)
 		h, err := readHeaderFrom([]byte{0x81, 0x7E, 0x01, 0x2C})
 		assert.NoError(t, err)
-		assert.Equal(t, uint64(300), h.Length())
+		assert.Equal(t, uint64(300), h.PayloadLen())
 		assert.False(t, h.FlagMask())
 	})
 
@@ -63,7 +63,7 @@ func TestReadHeader(t *testing.T) {
 		// FIN=1, opcode=text, MASK=1, len0=126, extended=300, mask=0xAABBCCDD
 		h, err := readHeaderFrom([]byte{0x81, 0xFE, 0x01, 0x2C, 0xAA, 0xBB, 0xCC, 0xDD})
 		assert.NoError(t, err)
-		assert.Equal(t, uint64(300), h.Length())
+		assert.Equal(t, uint64(300), h.PayloadLen())
 		mask, merr := h.Mask()
 		assert.NoError(t, merr)
 		assert.Equal(t, [4]byte{0xAA, 0xBB, 0xCC, 0xDD}, mask)
@@ -78,7 +78,7 @@ func TestReadHeader(t *testing.T) {
 			0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x11, 0x70,
 		})
 		assert.NoError(t, err)
-		assert.Equal(t, uint64(70000), h.Length())
+		assert.Equal(t, uint64(70000), h.PayloadLen())
 		assert.False(t, h.FlagMask())
 	})
 
@@ -91,7 +91,7 @@ func TestReadHeader(t *testing.T) {
 		})
 		assert.NoError(t, err)
 		assert.Equal(t, uint8(OpcodeBinary), h.Opcode())
-		assert.Equal(t, uint64(70000), h.Length())
+		assert.Equal(t, uint64(70000), h.PayloadLen())
 		mask, merr := h.Mask()
 		assert.NoError(t, merr)
 		assert.Equal(t, [4]byte{0x11, 0x22, 0x33, 0x44}, mask)
@@ -104,7 +104,7 @@ func TestReadHeader(t *testing.T) {
 		h, err := readHeaderFrom([]byte{0x88, 0x02})
 		assert.NoError(t, err)
 		assert.Equal(t, uint8(OpcodeClose), h.Opcode())
-		assert.Equal(t, uint64(2), h.Length())
+		assert.Equal(t, uint64(2), h.PayloadLen())
 	})
 
 	t.Run("valid ping frame", func(t *testing.T) {
@@ -213,7 +213,7 @@ func TestReadHeader(t *testing.T) {
 			0x81, 0x7F,
 			0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
 		})
-		assert.ErrorIs(t, err, ErrLengthTooLarge)
+		assert.ErrorIs(t, err, ErrPayloadLenTooLarge)
 	})
 }
 
@@ -302,11 +302,11 @@ func TestHeaderBuild(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			// Build the header using the setter API.
 			//
-			// Required call order: FIN/Opcode, then SetLength, then SetMask.
+			// Required call order: FIN/Opcode, then SetPayloadLen, then SetMask.
 			var h Header
 			h.SetFlagFIN(tc.fin)
 			h.SetOpcode(tc.opcode)
-			assert.NoError(t, h.SetLength(tc.length))
+			assert.NoError(t, h.SetPayloadLen(tc.length))
 			if tc.mask != nil {
 				h.SetMask(*tc.mask)
 			}
@@ -316,7 +316,7 @@ func TestHeaderBuild(t *testing.T) {
 			// Verify getters roundtrip correctly.
 			assert.Equal(t, tc.fin, h.FlagFIN())
 			assert.Equal(t, tc.opcode, h.Opcode())
-			assert.Equal(t, tc.length, h.Length())
+			assert.Equal(t, tc.length, h.PayloadLen())
 			if tc.mask != nil {
 				assert.True(t, h.FlagMask())
 				got, err := h.Mask()
@@ -356,7 +356,7 @@ func TestWriteHeader(t *testing.T) {
 				var wh Header
 				wh.SetFlagFIN(tc.fin)
 				wh.SetOpcode(tc.opcode)
-				assert.NoError(t, wh.SetLength(tc.length))
+				assert.NoError(t, wh.SetPayloadLen(tc.length))
 				if tc.mask != nil {
 					wh.SetMask(*tc.mask)
 				}
@@ -368,7 +368,7 @@ func TestWriteHeader(t *testing.T) {
 				assert.NoError(t, ReadHeader(bufio.NewReader(&buf), &rh))
 				assert.Equal(t, tc.fin, rh.FlagFIN())
 				assert.Equal(t, tc.opcode, rh.Opcode())
-				assert.Equal(t, tc.length, rh.Length())
+				assert.Equal(t, tc.length, rh.PayloadLen())
 				if tc.mask != nil {
 					got, err := rh.Mask()
 					assert.NoError(t, err)
@@ -382,7 +382,7 @@ func TestWriteHeader(t *testing.T) {
 		var h Header
 		h.SetFlagFIN(true)
 		h.SetOpcode(OpcodeText)
-		assert.NoError(t, h.SetLength(5))
+		assert.NoError(t, h.SetPayloadLen(5))
 
 		var full [0]byte
 		err := WriteHeader(fixedWriter(full[:]), &h)
@@ -400,11 +400,11 @@ func TestClear(t *testing.T) {
 	var h Header
 	h.SetFlagFIN(true)
 	h.SetOpcode(OpcodeText)
-	assert.NoError(t, h.SetLength(5))
+	assert.NoError(t, h.SetPayloadLen(5))
 	h.Clear()
 	assert.False(t, h.FlagFIN())
 	assert.Equal(t, uint8(0), h.Opcode())
-	assert.Equal(t, uint64(0), h.Length())
+	assert.Equal(t, uint64(0), h.PayloadLen())
 	assert.Equal(t, [14]byte{}, h.buf)
 }
 
@@ -522,48 +522,48 @@ func TestFlagMask(t *testing.T) {
 
 	t.Run("does not clobber length bits", func(t *testing.T) {
 		var h Header
-		assert.NoError(t, h.SetLength(50))
+		assert.NoError(t, h.SetPayloadLen(50))
 		h.SetFlagMask(true)
-		assert.Equal(t, uint64(50), h.Length())
+		assert.Equal(t, uint64(50), h.PayloadLen())
 		assert.True(t, h.FlagMask())
 	})
 }
 
-func TestSetLengthAndLength(t *testing.T) {
+func TestSetPayloadLenAndPayloadLen(t *testing.T) {
 	t.Run("short tier boundaries", func(t *testing.T) {
 		for _, length := range []uint64{0, 1, 125} {
 			var h Header
-			assert.NoError(t, h.SetLength(length))
-			assert.Equal(t, length, h.Length())
+			assert.NoError(t, h.SetPayloadLen(length))
+			assert.Equal(t, length, h.PayloadLen())
 		}
 	})
 
 	t.Run("medium tier boundaries", func(t *testing.T) {
 		for _, length := range []uint64{126, 300, math.MaxUint16} {
 			var h Header
-			assert.NoError(t, h.SetLength(length))
-			assert.Equal(t, length, h.Length())
+			assert.NoError(t, h.SetPayloadLen(length))
+			assert.Equal(t, length, h.PayloadLen())
 		}
 	})
 
 	t.Run("long tier", func(t *testing.T) {
 		for _, length := range []uint64{math.MaxUint16 + 1, 1 << 32, math.MaxInt64} {
 			var h Header
-			assert.NoError(t, h.SetLength(length))
-			assert.Equal(t, length, h.Length())
+			assert.NoError(t, h.SetPayloadLen(length))
+			assert.Equal(t, length, h.PayloadLen())
 		}
 	})
 
 	t.Run("rejects length exceeding MaxInt64", func(t *testing.T) {
 		var h Header
-		err := h.SetLength(math.MaxInt64 + 1)
-		assert.ErrorIs(t, err, ErrLengthTooLarge)
+		err := h.SetPayloadLen(math.MaxInt64 + 1)
+		assert.ErrorIs(t, err, ErrPayloadLenTooLarge)
 	})
 
 	t.Run("rejects MaxUint64", func(t *testing.T) {
 		var h Header
-		err := h.SetLength(math.MaxUint64)
-		assert.ErrorIs(t, err, ErrLengthTooLarge)
+		err := h.SetPayloadLen(math.MaxUint64)
+		assert.ErrorIs(t, err, ErrPayloadLenTooLarge)
 	})
 }
 
@@ -578,7 +578,7 @@ func TestMaskAndSetMask(t *testing.T) {
 
 	t.Run("short length tier", func(t *testing.T) {
 		var h Header
-		assert.NoError(t, h.SetLength(50))
+		assert.NoError(t, h.SetPayloadLen(50))
 		h.SetMask(testMask)
 		assert.True(t, h.FlagMask())
 		got, err := h.Mask()
@@ -588,7 +588,7 @@ func TestMaskAndSetMask(t *testing.T) {
 
 	t.Run("medium length tier", func(t *testing.T) {
 		var h Header
-		assert.NoError(t, h.SetLength(300))
+		assert.NoError(t, h.SetPayloadLen(300))
 		h.SetMask(testMask)
 		got, err := h.Mask()
 		assert.NoError(t, err)
@@ -597,7 +597,7 @@ func TestMaskAndSetMask(t *testing.T) {
 
 	t.Run("long length tier", func(t *testing.T) {
 		var h Header
-		assert.NoError(t, h.SetLength(70000))
+		assert.NoError(t, h.SetPayloadLen(70000))
 		h.SetMask(testMask)
 		got, err := h.Mask()
 		assert.NoError(t, err)
@@ -606,8 +606,8 @@ func TestMaskAndSetMask(t *testing.T) {
 
 	t.Run("mask does not overwrite length", func(t *testing.T) {
 		var h Header
-		assert.NoError(t, h.SetLength(300))
+		assert.NoError(t, h.SetPayloadLen(300))
 		h.SetMask(testMask)
-		assert.Equal(t, uint64(300), h.Length())
+		assert.Equal(t, uint64(300), h.PayloadLen())
 	})
 }

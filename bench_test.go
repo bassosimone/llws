@@ -67,7 +67,7 @@ func BenchmarkReadFrameAndDiscard(b *testing.B) {
 			var hdr Header
 			hdr.SetFlagFIN(true)
 			hdr.SetOpcode(OpcodeBinary)
-			require.NoError(b, hdr.SetLength(uint64(n)))
+			require.NoError(b, hdr.SetPayloadLen(uint64(n)))
 
 			frame := append([]byte(nil), hdr.Slice()...)
 			frame = append(frame, make([]byte, n)...)
@@ -100,7 +100,7 @@ func BenchmarkReadFrameAndCopy(b *testing.B) {
 			var hdr Header
 			hdr.SetFlagFIN(true)
 			hdr.SetOpcode(OpcodeBinary)
-			require.NoError(b, hdr.SetLength(uint64(n)))
+			require.NoError(b, hdr.SetPayloadLen(uint64(n)))
 
 			frame := append([]byte(nil), hdr.Slice()...)
 			frame = append(frame, make([]byte, n)...)
@@ -143,7 +143,7 @@ func BenchmarkReadFrameAndMatch(b *testing.B) {
 			var hdr Header
 			hdr.SetFlagFIN(true)
 			hdr.SetOpcode(OpcodeBinary)
-			require.NoError(b, hdr.SetLength(uint64(n)))
+			require.NoError(b, hdr.SetPayloadLen(uint64(n)))
 
 			expected := append([]byte(nil), hdr.Slice()...)
 			hdrLen := len(expected)
@@ -184,7 +184,7 @@ func BenchmarkWriteFrame(b *testing.B) {
 				h.Clear()
 				h.SetFlagFIN(true)
 				h.SetOpcode(OpcodeBinary)
-				if err := h.SetLength(uint64(n)); err != nil {
+				if err := h.SetPayloadLen(uint64(n)); err != nil {
 					b.Fatal(err)
 				}
 				if err := WriteHeader(bw, &h); err != nil {

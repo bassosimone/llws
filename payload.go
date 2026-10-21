@@ -31,7 +31,7 @@ func MaskPayload(body []byte, mask [4]byte) {
 //
 // Returns [io.ErrUnexpectedEOF] if the reader is exhausted early.
 func DiscardPayload(r *bufio.Reader, h *Header) error {
-	length := h.Length()
+	length := h.PayloadLen()
 	for length > 0 {
 		amount := int(min(math.MaxInt, length))
 		count, err := r.Discard(amount)
@@ -50,9 +50,9 @@ func DiscardPayload(r *bufio.Reader, h *Header) error {
 // [io.ErrUnexpectedEOF] if the reader is exhausted early.
 //
 // Each call pays an extra memcpy and a heap allocation. For the hot
-// path, use io.ReadFull(r, buf) with buf sized to h.Length().
+// path, use io.ReadFull(r, buf) with buf sized to h.PayloadLen().
 func ReadPayload(r *bufio.Reader, h *Header, w io.Writer) error {
-	length := h.Length()
+	length := h.PayloadLen()
 	runtimex.Assert(length <= math.MaxInt64)
 	lr := &io.LimitedReader{
 		R: r,

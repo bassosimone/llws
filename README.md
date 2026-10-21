@@ -43,7 +43,7 @@ var h llws.Header
 if err := llws.ReadHeader(rw.Reader, &h); err != nil {
 	log.Fatal(err)
 }
-payload := make([]byte, h.Length())
+payload := make([]byte, h.PayloadLen())
 if _, err := io.ReadFull(rw, payload); err != nil {
 	log.Fatal(err)
 }

@@ -25,7 +25,7 @@ func TestWriteTextFrame(t *testing.T) {
 		require.NoError(t, ReadHeader(r, &h))
 		assert.True(t, h.FlagFIN())
 		assert.Equal(t, uint8(OpcodeText), h.Opcode())
-		assert.Equal(t, uint64(5), h.Length())
+		assert.Equal(t, uint64(5), h.PayloadLen())
 		assert.False(t, h.FlagMask())
 
 		var got bytes.Buffer
@@ -83,7 +83,7 @@ func TestWriteBinaryFrame(t *testing.T) {
 		require.NoError(t, ReadHeader(r, &h))
 		assert.True(t, h.FlagFIN())
 		assert.Equal(t, uint8(OpcodeBinary), h.Opcode())
-		assert.Equal(t, uint64(4), h.Length())
+		assert.Equal(t, uint64(4), h.PayloadLen())
 
 		var got bytes.Buffer
 		require.NoError(t, ReadPayload(r, &h, &got))
@@ -103,7 +103,7 @@ func TestWriteControlFrame(t *testing.T) {
 		require.NoError(t, ReadHeader(r, &h))
 		assert.True(t, h.FlagFIN())
 		assert.Equal(t, uint8(OpcodeClose), h.Opcode())
-		assert.Equal(t, uint64(2), h.Length())
+		assert.Equal(t, uint64(2), h.PayloadLen())
 		assert.False(t, h.FlagMask())
 
 		var got bytes.Buffer
@@ -185,7 +185,7 @@ func TestWriteCloseFrame(t *testing.T) {
 		require.NoError(t, ReadHeader(r, &h))
 		assert.True(t, h.FlagFIN())
 		assert.Equal(t, uint8(OpcodeClose), h.Opcode())
-		assert.Equal(t, uint64(2), h.Length())
+		assert.Equal(t, uint64(2), h.PayloadLen())
 		assert.False(t, h.FlagMask())
 
 		var got bytes.Buffer

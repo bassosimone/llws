@@ -81,7 +81,7 @@ func doWriteFrame(w io.Writer, payload []byte, maskp *[4]byte, opcode uint8) err
 	header.SetFlagFIN(true)
 	header.SetOpcode(opcode)
 	// Cannot fail: len() returns int, so uint64(len(payload)) <= math.MaxInt64.
-	runtimex.PanicOnError0(header.SetLength(uint64(len(payload))))
+	runtimex.PanicOnError0(header.SetPayloadLen(uint64(len(payload))))
 	if maskp != nil {
 		header.SetMask(*maskp)
 		MaskPayload(payload, *maskp)

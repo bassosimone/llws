@@ -27,9 +27,9 @@ const (
 
 // Errors returned by [Header] methods.
 var (
-	// ErrLengthTooLarge indicates a payload length with the most significant
+	// ErrPayloadLenTooLarge indicates a payload length with the most significant
 	// bit set, which RFC 6455, Section 5.2 forbids.
-	ErrLengthTooLarge = errors.New("llws: payload length too large")
+	ErrPayloadLenTooLarge = errors.New("llws: payload length too large")
 
 	// ErrMaskNotSet indicates that [Header.Mask] was called on a frame
 	// whose mask bit is not set.
@@ -107,8 +107,8 @@ func (h *Header) len0() uint8 {
 	return h.buf[1] & 0x7f
 }
 
-// Length returns the payload length.
-func (h *Header) Length() uint64 {
+// PayloadLen returns the payload length.
+func (h *Header) PayloadLen() uint64 {
 	length := uint64(h.len0())
 
 	switch length {
@@ -130,11 +130,11 @@ func (h *Header) Length() uint64 {
 	return length
 }
 
-// SetLength sets the payload length. Returns [ErrLengthTooLarge] if
+// SetPayloadLen sets the payload length. Returns [ErrPayloadLenTooLarge] if
 // value >= 2^63. MUST be called before [Header.SetMask].
-func (h *Header) SetLength(value uint64) error {
+func (h *Header) SetPayloadLen(value uint64) error {
 	if value > math.MaxInt64 {
-		return ErrLengthTooLarge
+		return ErrPayloadLenTooLarge
 	}
 
 	switch {
@@ -197,7 +197,7 @@ func (h *Header) Mask() ([4]byte, error) {
 
 // SetMask sets the 4-byte masking key and the mask flag.
 //
-// MUST be called after [Header.SetLength].
+// MUST be called after [Header.SetPayloadLen].
 func (h *Header) SetMask(mask [4]byte) {
 	h.SetFlagMask(true)
 
@@ -276,7 +276,7 @@ func ReadHeader(r *bufio.Reader, h *Header) error {
 
 	// RFC 6455, Section 5.2: the most significant bit MUST be zero
 	if isLong == 1 && h.buf[2]&0x80 != 0 {
-		return ErrLengthTooLarge
+		return ErrPayloadLenTooLarge
 	}
 	return nil
 }

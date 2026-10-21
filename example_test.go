@@ -36,7 +36,7 @@ func Example_serverSendsTextFrames() {
 			h.Clear()
 			h.SetFlagFIN(true)
 			h.SetOpcode(llws.OpcodeText)
-			runtimex.PanicOnError0(h.SetLength(uint64(len(msg))))
+			runtimex.PanicOnError0(h.SetPayloadLen(uint64(len(msg))))
 
 			// Then you need to write the header and the body and flush.
 			runtimex.PanicOnError0(llws.WriteHeader(rw.Writer, &h))
@@ -48,7 +48,7 @@ func Example_serverSendsTextFrames() {
 		h.Clear()
 		h.SetFlagFIN(true)
 		h.SetOpcode(llws.OpcodeClose)
-		runtimex.PanicOnError0(h.SetLength(0))
+		runtimex.PanicOnError0(h.SetPayloadLen(0))
 		runtimex.PanicOnError0(llws.WriteHeader(rw.Writer, &h))
 		runtimex.PanicOnError0(rw.Flush())
 	}()
@@ -66,7 +66,7 @@ func Example_serverSendsTextFrames() {
 		if h.Opcode() == llws.OpcodeClose {
 			break
 		}
-		payload := make([]byte, h.Length())
+		payload := make([]byte, h.PayloadLen())
 		runtimex.PanicOnError1(io.ReadFull(rw.Reader, payload))
 		fmt.Println(string(payload))
 	}
@@ -102,7 +102,7 @@ func Example_clientSendsMaskedTextFrames() {
 			h.Clear()
 			h.SetFlagFIN(true)
 			h.SetOpcode(llws.OpcodeText)
-			runtimex.PanicOnError0(h.SetLength(uint64(len(msg))))
+			runtimex.PanicOnError0(h.SetPayloadLen(uint64(len(msg))))
 
 			// Generate a random 4-byte mask key per RFC 6455, Section 5.3
 			mask := llws.NewMask()
@@ -122,7 +122,7 @@ func Example_clientSendsMaskedTextFrames() {
 		h.Clear()
 		h.SetFlagFIN(true)
 		h.SetOpcode(llws.OpcodeClose)
-		runtimex.PanicOnError0(h.SetLength(0))
+		runtimex.PanicOnError0(h.SetPayloadLen(0))
 		mask := llws.NewMask()
 		h.SetMask(mask)
 		runtimex.PanicOnError0(llws.WriteHeader(rw.Writer, &h))
@@ -142,7 +142,7 @@ func Example_clientSendsMaskedTextFrames() {
 		}
 
 		// Read the masked payload
-		payload := make([]byte, h.Length())
+		payload := make([]byte, h.PayloadLen())
 		runtimex.PanicOnError1(io.ReadFull(rw.Reader, payload))
 
 		// Extract the mask key and unmask the payload
@@ -245,7 +245,7 @@ func Example_fixedSizeDataFlow() {
 	var expectedH llws.Header
 	expectedH.SetFlagFIN(true)
 	expectedH.SetOpcode(llws.OpcodeBinary)
-	runtimex.PanicOnError0(expectedH.SetLength(messageSize))
+	runtimex.PanicOnError0(expectedH.SetPayloadLen(messageSize))
 	expectedH.SetMask(sessionMask)
 	expected := append([]byte(nil), expectedH.Slice()...)
 	hdrLen := len(expected)

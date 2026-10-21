@@ -110,7 +110,7 @@ func newHeaderWithLength(length uint64) *Header {
 	var h Header
 	h.SetFlagFIN(true)
 	h.SetOpcode(OpcodeBinary)
-	if err := h.SetLength(length); err != nil {
+	if err := h.SetPayloadLen(length); err != nil {
 		panic(err)
 	}
 	return &h
