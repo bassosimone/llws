@@ -1,5 +1,5 @@
 //
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: BSD-3-Clause
 //
 // Adapted-from: https://github.com/measurement-kit/libndt
 //
