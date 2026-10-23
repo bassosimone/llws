@@ -108,7 +108,7 @@ func ServerReadUpgradeRequest(br *bufio.Reader) (*http.Request, error) {
 // Sec-WebSocket-Protocol offer (else [ErrUnrequestedSubprotocol]).
 //
 // On success, the transport is ready for frame I/O.
-func ServerAcceptUpgradeRequest(rw *bufio.Writer, req *http.Request, subprotocol string) error {
+func ServerAcceptUpgradeRequest(bw *bufio.Writer, req *http.Request, subprotocol string) error {
 	key := req.Header.Get("Sec-WebSocket-Key")
 	resp := &http.Response{
 		StatusCode: http.StatusSwitchingProtocols,
@@ -130,15 +130,15 @@ func ServerAcceptUpgradeRequest(rw *bufio.Writer, req *http.Request, subprotocol
 		}
 		resp.Header.Set("Sec-WebSocket-Protocol", subprotocol)
 	}
-	if err := resp.Write(rw); err != nil {
+	if err := resp.Write(bw); err != nil {
 		return err
 	}
-	return rw.Flush()
+	return bw.Flush()
 }
 
 // ServerRejectUpgradeRequest writes an HTTP error response with statusCode
 // and Sec-WebSocket-Version: 13 (RFC 6455 §4.4).
-func ServerRejectUpgradeRequest(rw *bufio.Writer, statusCode int) error {
+func ServerRejectUpgradeRequest(bw *bufio.Writer, statusCode int) error {
 	resp := &http.Response{
 		StatusCode: statusCode,
 		Status:     http.StatusText(statusCode),
@@ -150,10 +150,10 @@ func ServerRejectUpgradeRequest(rw *bufio.Writer, statusCode int) error {
 			"Connection":            {"close"},
 		},
 	}
-	if err := resp.Write(rw); err != nil {
+	if err := resp.Write(bw); err != nil {
 		return err
 	}
-	return rw.Flush()
+	return bw.Flush()
 }
 
 // ClientUpgrade performs the WebSocket client handshake (RFC 6455 §4.1):
