@@ -3,28 +3,46 @@
 package llws
 
 import (
-	"net"
+	"bytes"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 )
 
+func TestNewReader(t *testing.T) {
+	t.Run("returns a valid Reader", func(t *testing.T) {
+		r := NewReader(&bytes.Buffer{})
+		assert.NotNil(t, r)
+	})
+
+	t.Run("uses the configured buffer size", func(t *testing.T) {
+		r := NewReader(&bytes.Buffer{})
+		assert.Equal(t, DefaultReadBufferSize, r.Size())
+	})
+}
+
+func TestNewWriter(t *testing.T) {
+	t.Run("returns a valid Writer", func(t *testing.T) {
+		w := NewWriter(&bytes.Buffer{})
+		assert.NotNil(t, w)
+	})
+
+	t.Run("uses the configured buffer size", func(t *testing.T) {
+		w := NewWriter(&bytes.Buffer{})
+		assert.Equal(t, DefaultWriteBufferSize, w.Size())
+	})
+}
+
 func TestNewReadWriter(t *testing.T) {
 	t.Run("returns a valid ReadWriter", func(t *testing.T) {
-		client, server := net.Pipe()
-		defer client.Close()
-		defer server.Close()
-		rw := NewReadWriter(client)
+		rw := NewReadWriter(&bytes.Buffer{})
 		assert.NotNil(t, rw)
 		assert.NotNil(t, rw.Reader)
 		assert.NotNil(t, rw.Writer)
 	})
 
 	t.Run("uses configured buffer sizes", func(t *testing.T) {
-		client, server := net.Pipe()
-		defer client.Close()
-		defer server.Close()
-		rw := NewReadWriter(client)
+		rw := NewReadWriter(&bytes.Buffer{})
 		assert.Equal(t, DefaultReadBufferSize, rw.Reader.Size())
 		assert.Equal(t, DefaultWriteBufferSize, rw.Writer.Available())
 	})
