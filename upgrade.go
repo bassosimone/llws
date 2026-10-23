@@ -4,10 +4,12 @@ package llws
 
 import (
 	"bufio"
+	"context"
 	"crypto/rand"
 	"crypto/sha1"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -20,6 +22,9 @@ import (
 var (
 	// ErrMethod indicates the client sent a non-GET request.
 	ErrMethod = errors.New("llws: method is not GET")
+
+	// ErrNewClientRequest indicates that we cannot create an [*http.Request].
+	ErrNewClientRequest = errors.New("llws: cannot create client request")
 
 	// ErrUpgrade indicates a missing or incorrect Upgrade or
 	// Connection header.
@@ -115,12 +120,11 @@ func ServerAcceptUpgradeRequest(bw *bufio.Writer, req *http.Request, subprotocol
 		Proto:      "HTTP/1.1",
 		ProtoMajor: 1,
 		ProtoMinor: 1,
-		Header: http.Header{
-			"Upgrade":              {"websocket"},
-			"Connection":           {"Upgrade"},
-			"Sec-WebSocket-Accept": {acceptKey(key)},
-		},
+		Header:     http.Header{},
 	}
+	resp.Header.Set("Upgrade", "websocket")
+	resp.Header.Set("Connection", "Upgrade")
+	resp.Header.Set("Sec-WebSocket-Accept", acceptKey(key))
 	if subprotocol != "" {
 		if !isToken(subprotocol) {
 			return ErrSubprotocol
@@ -145,15 +149,44 @@ func ServerRejectUpgradeRequest(bw *bufio.Writer, statusCode int) error {
 		Proto:      "HTTP/1.1",
 		ProtoMajor: 1,
 		ProtoMinor: 1,
-		Header: http.Header{
-			"Sec-WebSocket-Version": {"13"},
-			"Connection":            {"close"},
-		},
+		Header:     http.Header{},
 	}
+	resp.Header.Set("Sec-WebSocket-Version", "13")
+	resp.Header.Set("Connection", "close")
 	if err := resp.Write(bw); err != nil {
 		return err
 	}
 	return bw.Flush()
+}
+
+// NewClientUpgradeRequest creates the [*http.Request] to upgrade to WebSocket.
+//
+// Panics if crypto/rand cannot produce the Sec-WebSocket-Key nonce.
+func NewClientUpgradeRequest(
+	ctx context.Context, targetURL string, subprotocols []string) (*http.Request, error) {
+	var nonce [16]byte
+	_ = runtimex.PanicOnError1(io.ReadFull(rand.Reader, nonce[:]))
+	key := base64.StdEncoding.EncodeToString(nonce[:])
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, http.NoBody)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrNewClientRequest, err)
+	}
+	req.Header.Set("Upgrade", "websocket")
+	req.Header.Set("Connection", "Upgrade")
+	req.Header.Set("Sec-WebSocket-Key", key)
+	req.Header.Set("Sec-WebSocket-Version", "13")
+
+	if len(subprotocols) > 0 {
+		for _, sp := range subprotocols {
+			if !isToken(sp) {
+				return nil, ErrSubprotocol
+			}
+		}
+		req.Header.Set("Sec-WebSocket-Protocol", strings.Join(subprotocols, ", "))
+	}
+
+	return req, nil
 }
 
 // ClientUpgrade performs the WebSocket client handshake (RFC 6455 §4.1):
@@ -164,34 +197,11 @@ func ServerRejectUpgradeRequest(bw *bufio.Writer, statusCode int) error {
 // Panics if crypto/rand cannot produce the Sec-WebSocket-Key nonce.
 func ClientUpgrade(rw *bufio.ReadWriter, target *url.URL, userAgent string, subprotocols []string) (string, error) {
 	// Prepare and send request
-	var nonce [16]byte
-	_ = runtimex.PanicOnError1(io.ReadFull(rand.Reader, nonce[:]))
-	key := base64.StdEncoding.EncodeToString(nonce[:])
-
-	req := &http.Request{
-		Method: http.MethodGet,
-		URL:    &url.URL{Path: target.Path, RawQuery: target.RawQuery},
-		Host:   target.Host,
-		Header: http.Header{
-			"Upgrade":               {"websocket"},
-			"Connection":            {"Upgrade"},
-			"Sec-WebSocket-Key":     {key},
-			"Sec-WebSocket-Version": {"13"},
-			"User-Agent":            {userAgent},
-		},
-		Proto:      "HTTP/1.1",
-		ProtoMajor: 1,
-		ProtoMinor: 1,
+	req, err := NewClientUpgradeRequest(context.Background(), target.String(), subprotocols)
+	if err != nil {
+		return "", err
 	}
-
-	if len(subprotocols) > 0 {
-		for _, sp := range subprotocols {
-			if !isToken(sp) {
-				return "", ErrSubprotocol
-			}
-		}
-		req.Header.Set("Sec-WebSocket-Protocol", strings.Join(subprotocols, ", "))
-	}
+	req.Header.Set("User-Agent", userAgent)
 
 	if err := req.Write(rw); err != nil {
 		return "", err
@@ -207,6 +217,14 @@ func ClientUpgrade(rw *bufio.ReadWriter, target *url.URL, userAgent string, subp
 	}
 	resp.Body.Close()
 
+	return ClientParseUpgradeResponse(req, resp)
+}
+
+// ClientParseUpgradeResponse parses an [*http.Response] as the response to
+// the [*http.Request] returned by [NewClientUpgradeRequest].
+//
+// Returns the negotiated subprotocol or an error.
+func ClientParseUpgradeResponse(req *http.Request, resp *http.Response) (string, error) {
 	if resp.StatusCode != http.StatusSwitchingProtocols {
 		return "", ErrStatus
 	}
@@ -216,7 +234,8 @@ func ClientUpgrade(rw *bufio.ReadWriter, target *url.URL, userAgent string, subp
 	if !headerContains(resp.Header, "Connection", "upgrade") {
 		return "", ErrUpgrade
 	}
-	if resp.Header.Get("Sec-WebSocket-Accept") != acceptKey(key) {
+	key := acceptKey(req.Header.Get("Sec-WebSocket-Key"))
+	if resp.Header.Get("Sec-WebSocket-Accept") != key {
 		return "", ErrAccept
 	}
 
@@ -226,25 +245,11 @@ func ClientUpgrade(rw *bufio.ReadWriter, target *url.URL, userAgent string, subp
 	}
 
 	// RFC 6455, Section 4.1 step 6: reject unrequested subprotocol.
-	//
-	// We use case-sensitive comparison here. The RFC explicitly marks
-	// Upgrade (Section 4.2.1, item 3) and Connection (item 4) as
-	// "treated as an ASCII case-insensitive value" but says no such
-	// thing for Sec-WebSocket-Protocol (item 8). Subprotocol values
-	// are tokens registered in the IANA registry (Section 11.5), and
-	// the server "MUST" select "one of the values from the
-	// |Sec-WebSocket-Protocol| field" (Section 4.2.2), implying an
-	// exact match of the token the client sent.
-	if sp := resp.Header.Get("Sec-WebSocket-Protocol"); sp != "" {
-		for _, requested := range subprotocols {
-			if sp == requested {
-				return requested, nil
-			}
-		}
+	subprotocol := resp.Header.Get("Sec-WebSocket-Protocol")
+	if subprotocol != "" && !clientOfferedSubprotocol(req, subprotocol) {
 		return "", ErrUnrequestedSubprotocol
 	}
-
-	return "", nil
+	return subprotocol, nil
 }
 
 // isToken reports whether s is a valid RFC 9110, Section 5.6.2 token.
@@ -260,8 +265,17 @@ func isToken(s string) bool {
 	return true
 }
 
-// clientOfferedSubprotocol reports whether sp appears (case-sensitive)
-// among the request's Sec-WebSocket-Protocol values.
+// clientOfferedSubprotocol reports whether sp appears among the
+// request's Sec-WebSocket-Protocol values.
+//
+// We use case-sensitive comparison here. The RFC explicitly marks
+// Upgrade (Section 4.2.1, item 3) and Connection (item 4) as
+// "treated as an ASCII case-insensitive value" but says no such
+// thing for Sec-WebSocket-Protocol (item 8). Subprotocol values
+// are tokens registered in the IANA registry (Section 11.5), and
+// the server "MUST" select "one of the values from the
+// |Sec-WebSocket-Protocol| field" (Section 4.2.2), implying an
+// exact match of the token the client sent.
 func clientOfferedSubprotocol(req *http.Request, sp string) bool {
 	for _, v := range req.Header.Values("Sec-WebSocket-Protocol") {
 		for field := range strings.SplitSeq(v, ",") {
@@ -274,7 +288,7 @@ func clientOfferedSubprotocol(req *http.Request, sp string) bool {
 }
 
 func headerContains(h http.Header, key, value string) bool {
-	for _, v := range h[http.CanonicalHeaderKey(key)] {
+	for _, v := range h.Values(key) {
 		for field := range strings.SplitSeq(v, ",") {
 			if asciiEqualFold(asciiTrimOWS(field), value) {
 				return true

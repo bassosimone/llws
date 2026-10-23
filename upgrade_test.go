@@ -5,6 +5,8 @@ package llws
 import (
 	"bufio"
 	"bytes"
+	"context"
+	"encoding/base64"
 	"io"
 	"net"
 	"net/http"
@@ -397,6 +399,229 @@ func TestServerRejectUpgradeRequest(t *testing.T) {
 	})
 }
 
+func TestNewClientUpgradeRequest(t *testing.T) {
+	t.Run("success case", func(t *testing.T) {
+		target := &url.URL{
+			Scheme:   "wss",
+			Host:     "localhost",
+			Path:     "/ndt/v8/download",
+			RawQuery: "duration=3000&cc=bbr",
+		}
+		req, err := NewClientUpgradeRequest(
+			context.Background(),
+			target.String(),
+			[]string{"ndt7", "ndt8"},
+		)
+		assert.NoError(t, err)
+		assert.Equal(t, http.MethodGet, req.Method)
+		assert.Equal(t, target, req.URL)
+		assert.Equal(t, target.Host, req.Host)
+		assert.Equal(t, "HTTP/1.1", req.Proto)
+		assert.Equal(t, 1, req.ProtoMajor)
+		assert.Equal(t, 1, req.ProtoMinor)
+		assert.Equal(t, "websocket", req.Header.Get("Upgrade"))
+		assert.Equal(t, "Upgrade", req.Header.Get("Connection"))
+		assert.Equal(t, "13", req.Header.Get("Sec-WebSocket-Version"))
+		assert.Equal(t, "ndt7, ndt8", req.Header.Get("Sec-WebSocket-Protocol"))
+
+		key := req.Header.Get("Sec-WebSocket-Key")
+		decoded, err := base64.StdEncoding.DecodeString(key)
+		assert.NoError(t, err)
+		assert.Len(t, decoded, 16)
+	})
+
+	t.Run("invalid subprotocol name", func(t *testing.T) {
+		target := &url.URL{
+			Scheme: "wss",
+			Host:   "localhost",
+			Path:   "/ndt/v8/download",
+		}
+		req, err := NewClientUpgradeRequest(
+			context.Background(),
+			target.String(),
+			[]string{"\t", "\n"},
+		)
+		assert.ErrorIs(t, err, ErrSubprotocol)
+		assert.Nil(t, req)
+	})
+
+	t.Run("invalid URL", func(t *testing.T) {
+		req, err := NewClientUpgradeRequest(
+			context.Background(),
+			"\n\t\n",
+			[]string{"x"},
+		)
+		assert.ErrorIs(t, err, ErrNewClientRequest)
+		assert.Nil(t, req)
+	})
+
+}
+
+func TestClientParseUpgradeResponse(t *testing.T) {
+	type testcase struct {
+		// the test case name
+		name string
+
+		// how to create the request
+		key          string
+		subprotocols []string
+
+		// how to create the response
+		status     int
+		upgrade    string
+		connection string
+		accept     string
+		extensions string
+		protocol   string
+
+		// what to expect in output
+		negotiated string
+		err        error
+	}
+
+	cases := []testcase{
+		{
+			name:   "invalid status code",
+			status: http.StatusOK,
+			err:    ErrStatus,
+		},
+		{
+			name:    "invalid upgrade header",
+			status:  http.StatusSwitchingProtocols,
+			upgrade: "antani",
+			err:     ErrUpgrade,
+		},
+		{
+			name:       "invalid connection header",
+			status:     http.StatusSwitchingProtocols,
+			upgrade:    "websocket",
+			connection: "antani",
+			err:        ErrUpgrade,
+		},
+		{
+			name:       "invalid sec-websocket-accept header",
+			key:        "0xdeadbeef",
+			status:     http.StatusSwitchingProtocols,
+			upgrade:    "websocket",
+			connection: "upgrade",
+			accept:     "antani",
+			err:        ErrAccept,
+		},
+		{
+			name:       "unexpected sec-websocket-extensions header",
+			key:        "0xdeadbeef",
+			status:     http.StatusSwitchingProtocols,
+			upgrade:    "websocket",
+			connection: "upgrade",
+			accept:     acceptKey("0xdeadbeef"),
+			extensions: "mascetti, sblinda",
+			err:        ErrExtensions,
+		},
+		{
+			name:         "unrequested subprotocol with client offers",
+			key:          "0xdeadbeef",
+			subprotocols: []string{"mascetti", "sblinda"},
+			status:       http.StatusSwitchingProtocols,
+			upgrade:      "websocket",
+			connection:   "upgrade",
+			accept:       acceptKey("0xdeadbeef"),
+			extensions:   "",
+			err:          ErrUnrequestedSubprotocol,
+			protocol:     "antani",
+		},
+		{
+			name:         "unrequested subprotocol without client offers",
+			key:          "0xdeadbeef",
+			subprotocols: []string{},
+			status:       http.StatusSwitchingProtocols,
+			upgrade:      "websocket",
+			connection:   "upgrade",
+			accept:       acceptKey("0xdeadbeef"),
+			extensions:   "",
+			err:          ErrUnrequestedSubprotocol,
+			protocol:     "antani",
+		},
+		{
+			name:         "no subprotocol with client offers",
+			key:          "0xdeadbeef",
+			subprotocols: []string{"antani", "mascetti"},
+			status:       http.StatusSwitchingProtocols,
+			upgrade:      "websocket",
+			connection:   "upgrade",
+			accept:       acceptKey("0xdeadbeef"),
+			extensions:   "",
+			err:          nil,
+			protocol:     "",
+		},
+		{
+			name:         "right subprotocol with client offers",
+			key:          "0xdeadbeef",
+			subprotocols: []string{"antani", "mascetti"},
+			status:       http.StatusSwitchingProtocols,
+			upgrade:      "websocket",
+			connection:   "upgrade",
+			accept:       acceptKey("0xdeadbeef"),
+			extensions:   "",
+			err:          nil,
+			protocol:     "antani",
+			negotiated:   "antani",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// create request
+			req := &http.Request{
+				Header: http.Header{},
+			}
+			req.Header.Set("Sec-WebSocket-Key", tc.key)
+			for _, entry := range tc.subprotocols {
+				req.Header.Add("Sec-WebSocket-Protocol", entry)
+			}
+
+			// create response
+			resp := &http.Response{
+				Header:     http.Header{},
+				StatusCode: tc.status,
+			}
+			resp.Header.Set("Upgrade", tc.upgrade)
+			resp.Header.Set("Connection", tc.connection)
+			resp.Header.Set("Sec-WebSocket-Accept", tc.accept)
+			resp.Header.Set("Sec-WebSocket-Extensions", tc.extensions)
+			resp.Header.Set("Sec-WebSocket-Protocol", tc.protocol)
+
+			negotiated, err := ClientParseUpgradeResponse(req, resp)
+			assert.ErrorIs(t, err, tc.err)
+			assert.Equal(t, tc.negotiated, negotiated)
+		})
+	}
+}
+
+func Test_clientOfferedSubprotocol(t *testing.T) {
+	t.Run("with multiple values", func(t *testing.T) {
+		req := &http.Request{Header: http.Header{}}
+		req.Header.Add("Sec-WebSocket-Protocol", "antani")
+		req.Header.Add("Sec-WebSocket-Protocol", "mascetti")
+		req.Header.Add("Sec-WebSocket-Protocol", "foo")
+		ok := clientOfferedSubprotocol(req, "foo")
+		assert.True(t, ok)
+	})
+
+	t.Run("with comma separated list", func(t *testing.T) {
+		req := &http.Request{Header: http.Header{}}
+		req.Header.Add("Sec-WebSocket-Protocol", "antani, mascetti")
+		ok := clientOfferedSubprotocol(req, "mascetti")
+		assert.True(t, ok)
+	})
+
+	t.Run("with case sensitive comparison", func(t *testing.T) {
+		req := &http.Request{Header: http.Header{}}
+		req.Header.Add("Sec-WebSocket-Protocol", "Antani, Mascetti")
+		ok := clientOfferedSubprotocol(req, "mascetti")
+		assert.False(t, ok)
+	})
+}
+
 func TestClientUpgrade(t *testing.T) {
 	target := &url.URL{Scheme: "ws", Host: "localhost", Path: "/ws"}
 
@@ -410,8 +635,7 @@ func TestClientUpgrade(t *testing.T) {
 		rw, client, server := clientPipe()
 		defer client.Close()
 		go mockServer(server, func(req *http.Request, resp *http.Response) {
-			// The server-side http.ReadRequest must see the query
-			// in RawQuery, not baked into Path.
+			// The server-side http.ReadRequest must see the query in RawQuery.
 			assert.Equal(t, "/ndt/v8/download", req.URL.Path)
 			assert.Equal(t, "duration=3000&cc=bbr", req.URL.RawQuery)
 			assert.Equal(t, "3000", req.URL.Query().Get("duration"))
@@ -580,8 +804,8 @@ func TestClientUpgrade(t *testing.T) {
 	})
 
 	t.Run("reader preserves bytes after 101 response", func(t *testing.T) {
-		// A valid WebSocket TEXT frame "hello" written immediately after
-		// the 101 response, simulating a server that pushes data without
+		// A valid WebSocket TEXT frame "hello" written immediately after the
+		// 101 response, simulating a server that pushes data without
 		// waiting. ClientUpgrade must leave these bytes intact in rw.Reader.
 		sentinel := []byte{0x81, 0x05, 'h', 'e', 'l', 'l', 'o'}
 
