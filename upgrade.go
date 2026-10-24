@@ -23,7 +23,7 @@ var (
 	// ErrMethod indicates the client sent a non-GET request.
 	ErrMethod = errors.New("llws: method is not GET")
 
-	// ErrNewClientRequest indicates that we cannot create an [*http.Request].
+	// ErrNewClientRequest indicates that we cannot create an *http.Request.
 	ErrNewClientRequest = errors.New("llws: cannot create client request")
 
 	// ErrUpgrade indicates a missing or incorrect Upgrade or

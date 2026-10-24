@@ -31,7 +31,7 @@ var (
 	// bit set, which RFC 6455, Section 5.2 forbids.
 	ErrPayloadLenTooLarge = errors.New("llws: payload length too large")
 
-	// ErrMaskNotSet indicates that [Header.Mask] was called on a frame
+	// ErrMaskNotSet indicates that Header.Mask was called on a frame
 	// whose mask bit is not set.
 	ErrMaskNotSet = errors.New("llws: mask flag not set")
 

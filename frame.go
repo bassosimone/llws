@@ -67,13 +67,17 @@ func WriteControlFrame(w io.Writer, opcode uint8, payload []byte, maskp *[4]byte
 	return doWriteFrame(w, payload, maskp, opcode)
 }
 
+func closeFramePayload(statusCode uint16) []byte {
+	var payload [2]byte
+	binary.BigEndian.PutUint16(payload[:], statusCode)
+	return payload[:]
+}
+
 // WriteCloseFrame writes a Close frame carrying statusCode.
 //
 // If maskp is not nil, masks the 2-byte payload.
 func WriteCloseFrame(w io.Writer, statusCode uint16, maskp *[4]byte) error {
-	var payload [2]byte
-	binary.BigEndian.PutUint16(payload[:], statusCode)
-	return WriteControlFrame(w, OpcodeClose, payload[:], maskp)
+	return WriteControlFrame(w, OpcodeClose, closeFramePayload(statusCode), maskp)
 }
 
 func doWriteFrame(w io.Writer, payload []byte, maskp *[4]byte, opcode uint8) error {

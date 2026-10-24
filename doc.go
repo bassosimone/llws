@@ -4,12 +4,11 @@
 // frame header encoding and decoding, payload masking, the opening handshake
 // for both client and server, and performance-tuned buffered I/O setup.
 //
-// It deliberately does not implement message reassembly, control-frame dispatch,
-// or connection lifecycle management. Consumers build their own WebSocket protocol
-// logic on top of these primitives.
+// It also includes a minimal [*Conn] implementation designed to work well in
+// research contexts such as implementing NDT-like protocols.
 //
-// As such, this package is probably more suitable for research and understanding
-// the limits of other implementations than it is for writing production code.
+// This package is probably more suitable for research and understanding the
+// overall performance limits than it is for writing production code.
 //
 // See https://datatracker.ietf.org/doc/html/rfc6455.
 package llws
