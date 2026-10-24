@@ -5,8 +5,8 @@
 The `llws` Go package provides low-level WebSocket ([RFC 6455](
 https://datatracker.ietf.org/doc/html/rfc6455)) framing primitives: frame
 header encoding and decoding, payload masking, and the client and server
-opening handshake. It deliberately does not implement message reassembly,
-control-frame dispatch, or connection lifecycle management.
+opening handshake. It also includes a minimal `Conn` implementation designed
+to work well in research contexts such as implementing NDT-like protocols.
 
 ```Go
 import (
