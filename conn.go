@@ -28,7 +28,7 @@ import (
 //
 // Note that concurrent goroutines are always allowed to invoke [*Conn.Close].
 //
-// Use [NewClientConn] to construct a new [*Conn].
+// Use [NewClientConn] or [NewServerConn] to construct a new [*Conn].
 type Conn struct {
 	// selected subproto.
 	subproto string
@@ -52,6 +52,56 @@ type Conn struct {
 	pingFlag atomic.Bool
 	pingMsg  []byte
 	pingMu   sync.Mutex
+}
+
+// NewServerConn constructs a server WebSocket connection. We expect you to invoke this function
+// after [ServerAcceptUpgradeRequest] has already been invoked.
+//
+// This function takes immediate ownership of the [net.Conn]:
+//
+//  1. the [net.Conn] is closed on failure
+//
+//  2. you must not use the [net.Conn] anymore with the only exception that a previously
+//     registered `defer conn.Close` on the [net.Conn] is permissible
+//
+// We shed the `brw` buffers and read from the [net.Conn] using [NewReader], so that the read
+// buffer size does not depend on who performed the upgrade (e.g., [net/http] hijacking gives
+// you a 4 KiB reader). To this end, this function fails if:
+//
+//  1. there are unflushed data in the `brw` write buffer, which typically indicates that
+//     you have not used [ServerAcceptUpgradeRequest] to accept the upgrade
+//
+//  2. there are buffered data in the `brw` read buffer, which indicates that the client sent
+//     data before receiving the response, violating RFC 6455 §4.1
+//
+// Closing the [*Conn] closes the underlying [net.Conn] as a side effect.
+func NewServerConn(conn net.Conn, brw *bufio.ReadWriter) (*Conn, error) {
+	// Make sure we can safely shed the write buffer.
+	if count := brw.Writer.Buffered(); count > 0 {
+		conn.Close()
+		return nil, fmt.Errorf("llws: %d bytes of unsent data still in the write buffer", count)
+	}
+
+	// Make sure we can safely shed the read buffer.
+	if count := brw.Reader.Buffered(); count > 0 {
+		conn.Close()
+		return nil, fmt.Errorf("llws: %d bytes received before sending the upgrade response", count)
+	}
+
+	wsconn := &Conn{
+		subproto: "", // unused on the server side
+		cd:       conn,
+		br:       NewReader(conn),
+		hdr:      &Header{},
+		omask:    false, // the server does not mask its output
+		w:        conn,
+		pingCh:   make(chan struct{}, 1), // level triggered event
+		pingFlag: atomic.Bool{},
+		pingMsg:  nil,
+		pingMu:   sync.Mutex{},
+	}
+
+	return wsconn, nil
 }
 
 // NewClientConn performs the WebSocket upgrade described in the [*http.Request] (typically
@@ -112,9 +162,12 @@ func NewClientConn(conn net.Conn, req *http.Request) (*Conn, error) {
 	return wsconn, nil
 }
 
-// NegotiatedProtocol returns the WebSocket protocol that was negotiated.
+// NegotiatedProtocol returns:
 //
-// If none was negotiated, the return value is an empty string.
+//   - for client connections, the WebSocket protocol that was negotiated or an
+//     empty string if none was negotiated.
+//
+//   - for server connections, always an empty string.
 func (c *Conn) NegotiatedProtocol() string {
 	return c.subproto
 }
@@ -293,7 +346,8 @@ var ErrMessageTooLarge = errors.New("llws: message too large")
 // ReadMessage is like [*Conn.DiscardMessage] except that we do not discard the frames
 // payload, but rather we accumulate it inside the [io.Writer]. If the payload has a
 // mask, we unconditionally apply the mask. This design choice violates the letter of
-// the RFC (only servers should unmask payloads), but follows Postel's Law.
+// the RFC with respect to which party should mask and what should happen when a
+// mask is received when it is not expected, but follows Postel's Law.
 //
 // The `maxSize` parameter limits how large the message could be. We return the
 // [ErrMessageTooLarge] if this limit is violated.

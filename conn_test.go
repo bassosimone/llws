@@ -647,3 +647,55 @@ func TestNewClientConn(t *testing.T) {
 		assert.True(t, client.closed.Load())
 	})
 }
+
+// newServerConnPipe returns a [*closeRecorder] for the server side, a
+// [*bufio.ReadWriter] wrapping it, and the client side of a [net.Pipe].
+func newServerConnPipe(t *testing.T) (*closeRecorder, *bufio.ReadWriter, net.Conn) {
+	t.Helper()
+	client, server := net.Pipe()
+	t.Cleanup(func() { client.Close(); server.Close() })
+	rec := &closeRecorder{Conn: server}
+	return rec, bufio.NewReadWriter(bufio.NewReader(rec), bufio.NewWriter(rec)), client
+}
+
+func TestNewServerConn(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		server, brw, client := newServerConnPipe(t)
+
+		c, err := NewServerConn(server, brw)
+		require.NoError(t, err)
+		assert.Equal(t, "", c.NegotiatedProtocol())
+		assert.Same(t, server, c.NetConn())
+		assert.False(t, c.omask)
+		assert.Equal(t, DefaultReadBufferSize, c.br.Size()) // not the caller's reader
+		assert.Equal(t, 1, cap(c.pingCh))                   // an unbuffered channel loses wakeups
+		assert.False(t, server.closed.Load())
+
+		mask := [4]byte{1, 2, 3, 4}
+		go client.Write(testFrame(true, OpcodeBinary, "next", &mask))
+		requireTrailer(t, c)
+
+		require.NoError(t, c.Close())
+		assert.True(t, server.closed.Load())
+	})
+
+	t.Run("closes the conn when the write buffer is not flushed", func(t *testing.T) {
+		server, brw, _ := newServerConnPipe(t)
+		brw.WriteString("HTTP/1.1 101 Switching Protocols\r\n")
+
+		_, err := NewServerConn(server, brw)
+		require.ErrorContains(t, err, "write buffer")
+		assert.True(t, server.closed.Load())
+	})
+
+	t.Run("closes the conn when the client sent data before the response", func(t *testing.T) {
+		server, brw, client := newServerConnPipe(t)
+		go client.Write(trailerFrame)
+		_, err := brw.Peek(1) // simulate what net/http may have buffered before hijacking
+		require.NoError(t, err)
+
+		_, err = NewServerConn(server, brw)
+		require.ErrorContains(t, err, "before sending the upgrade response")
+		assert.True(t, server.closed.Load())
+	})
+}
