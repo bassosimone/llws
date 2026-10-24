@@ -77,3 +77,7 @@ go test -v -cover .
 ```
 SPDX-License-Identifier: GPL-3.0-or-later
 ```
+
+## History
+
+Adapted from [measurement-kit/libndt](https://github.com/measurement-kit/libndt).
