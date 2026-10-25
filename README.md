@@ -80,4 +80,5 @@ SPDX-License-Identifier: GPL-3.0-or-later
 
 ## History
 
-Adapted from [measurement-kit/libndt](https://github.com/measurement-kit/libndt).
+Adapted from [measurement-kit/libndt](https://github.com/measurement-kit/libndt). Includes
+code adapted from the Go standard library (`ascii.go`, `ascii_test.go`).
