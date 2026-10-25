@@ -13,6 +13,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 
 	"github.com/bassosimone/runtimex"
@@ -71,32 +72,73 @@ func IsUpgradeRequest(req *http.Request) bool {
 		headerContains(req.Header, "Upgrade", "websocket")
 }
 
-// ServerParseUpgradeRequest validates req as a WebSocket upgrade request
-// (RFC 6455 §4.2.1). Call after [http.ReadRequest], before [ServerAcceptUpgradeRequest].
-func ServerParseUpgradeRequest(req *http.Request) error {
+// UpgradeOfferedSubprotocols is a list of subprotocols offered by the client.
+type UpgradeOfferedSubprotocols []string
+
+func newUpgradeOfferedSubprotocols(req *http.Request) UpgradeOfferedSubprotocols {
+	already := make(map[string]bool)
+	out := UpgradeOfferedSubprotocols{}
+	for _, v := range req.Header.Values("Sec-WebSocket-Protocol") {
+		for field := range strings.SplitSeq(v, ",") {
+			trimmed := asciiTrimOWS(field)
+			if trimmed != "" && isToken(trimmed) && !already[trimmed] {
+				out = append(out, trimmed)
+				already[trimmed] = true
+			}
+		}
+	}
+	return out
+}
+
+// Contains returns whether sp appears among the request's Sec-WebSocket-Protocol values.
+//
+// We use case-sensitive comparison here. The RFC explicitly marks Upgrade (Section 4.2.1,
+// item 3) and Connection (item 4) as "treated as an ASCII case-insensitive value" but says
+// no such thing for Sec-WebSocket-Protocol (item 8). Subprotocol values are tokens registered
+// in the IANA registry (Section 11.5), and the server "MUST" select "one of the values from
+// the |Sec-WebSocket-Protocol| field" (Section 4.2.2), implying an exact match.
+func (uos UpgradeOfferedSubprotocols) Contains(sp string) bool {
+	return slices.Contains(uos, sp)
+}
+
+// ServerValidateUpgradeRequest validates req as a WebSocket upgrade request
+// (RFC 6455 §4.2.1) and returns the offered subprotocols, filtering out invalid
+// subprotocol names (Postel's Law).
+func ServerValidateUpgradeRequest(req *http.Request) (UpgradeOfferedSubprotocols, error) {
 	if req.Method != http.MethodGet {
-		return ErrMethod
+		return nil, ErrMethod
 	}
 	if !headerContains(req.Header, "Connection", "upgrade") {
-		return ErrUpgrade
+		return nil, ErrUpgrade
 	}
 	if !headerContains(req.Header, "Upgrade", "websocket") {
-		return ErrUpgrade
+		return nil, ErrUpgrade
 	}
 	if req.Header.Get("Sec-WebSocket-Version") != "13" {
-		return ErrVersion
+		return nil, ErrVersion
 	}
 
 	key := req.Header.Get("Sec-WebSocket-Key")
 	decoded, err := base64.StdEncoding.DecodeString(key)
 	if err != nil || len(decoded) != 16 {
-		return ErrKey
+		return nil, ErrKey
 	}
 
-	return nil
+	return newUpgradeOfferedSubprotocols(req), nil
+}
+
+// ServerParseUpgradeRequest validates req as a WebSocket upgrade request
+// (RFC 6455 §4.2.1). Call after [http.ReadRequest], before [ServerAcceptUpgradeRequest].
+//
+// Deprecated: prefer using [ServerValidateUpgradeRequest] instead.
+func ServerParseUpgradeRequest(req *http.Request) error {
+	_, err := ServerValidateUpgradeRequest(req)
+	return err
 }
 
 // ServerReadUpgradeRequest combines [http.ReadRequest] and [ServerParseUpgradeRequest].
+//
+// Deprecated: prefer using [http.ReadRequest] followed by [ServerValidateUpgradeRequest] instead.
 func ServerReadUpgradeRequest(br *bufio.Reader) (*http.Request, error) {
 	req, err := http.ReadRequest(br)
 	if err != nil {
@@ -111,6 +153,10 @@ func ServerReadUpgradeRequest(br *bufio.Reader) (*http.Request, error) {
 // ServerAcceptUpgradeRequest writes a 101 Switching Protocols response
 // (RFC 6455 §4.2.2). The subprotocol, if non-empty, MUST be in the request's
 // Sec-WebSocket-Protocol offer (else [ErrUnrequestedSubprotocol]).
+//
+// If you use [ServerValidateUpgradeRequest] and [UpgradeOfferedSubprotocols.Contains]
+// this function cannot fail because of a subprotocol mismatch and the only
+// possible failure mode is an I/O error when writing the response to the socket.
 //
 // On success, the transport is ready for frame I/O.
 func ServerAcceptUpgradeRequest(bw *bufio.Writer, req *http.Request, subprotocol string) error {
@@ -267,24 +313,8 @@ func isToken(s string) bool {
 
 // clientOfferedSubprotocol reports whether sp appears among the
 // request's Sec-WebSocket-Protocol values.
-//
-// We use case-sensitive comparison here. The RFC explicitly marks
-// Upgrade (Section 4.2.1, item 3) and Connection (item 4) as
-// "treated as an ASCII case-insensitive value" but says no such
-// thing for Sec-WebSocket-Protocol (item 8). Subprotocol values
-// are tokens registered in the IANA registry (Section 11.5), and
-// the server "MUST" select "one of the values from the
-// |Sec-WebSocket-Protocol| field" (Section 4.2.2), implying an
-// exact match of the token the client sent.
 func clientOfferedSubprotocol(req *http.Request, sp string) bool {
-	for _, v := range req.Header.Values("Sec-WebSocket-Protocol") {
-		for field := range strings.SplitSeq(v, ",") {
-			if asciiTrimOWS(field) == sp {
-				return true
-			}
-		}
-	}
-	return false
+	return newUpgradeOfferedSubprotocols(req).Contains(sp)
 }
 
 func headerContains(h http.Header, key, value string) bool {

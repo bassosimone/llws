@@ -193,59 +193,158 @@ func TestIsUpgradeRequest(t *testing.T) {
 	}
 }
 
-func TestServerParseUpgradeRequest(t *testing.T) {
+func TestServerValidateUpgradeRequest(t *testing.T) {
 	parseValid := func(t *testing.T) *http.Request {
 		t.Helper()
 		req, err := http.ReadRequest(readerFor(validUpgradeRequest()))
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		return req
 	}
 
 	t.Run("valid request succeeds", func(t *testing.T) {
 		req := parseValid(t)
-		assert.NoError(t, ServerParseUpgradeRequest(req))
+		offered, err := ServerValidateUpgradeRequest(req)
+		assert.NoError(t, err)
+		assert.Empty(t, offered)
 	})
 
 	t.Run("rejects POST method", func(t *testing.T) {
 		req := parseValid(t)
 		req.Method = http.MethodPost
-		assert.ErrorIs(t, ServerParseUpgradeRequest(req), ErrMethod)
+		offered, err := ServerValidateUpgradeRequest(req)
+		assert.ErrorIs(t, err, ErrMethod)
+		assert.Nil(t, offered)
 	})
 
 	t.Run("rejects missing Connection header", func(t *testing.T) {
 		req := parseValid(t)
 		req.Header.Del("Connection")
-		assert.ErrorIs(t, ServerParseUpgradeRequest(req), ErrUpgrade)
+		offered, err := ServerValidateUpgradeRequest(req)
+		assert.ErrorIs(t, err, ErrUpgrade)
+		assert.Nil(t, offered)
 	})
 
 	t.Run("rejects missing Upgrade header", func(t *testing.T) {
 		req := parseValid(t)
 		req.Header.Del("Upgrade")
-		assert.ErrorIs(t, ServerParseUpgradeRequest(req), ErrUpgrade)
+		offered, err := ServerValidateUpgradeRequest(req)
+		assert.ErrorIs(t, err, ErrUpgrade)
+		assert.Nil(t, offered)
 	})
 
 	t.Run("rejects wrong version", func(t *testing.T) {
 		req := parseValid(t)
 		req.Header.Set("Sec-WebSocket-Version", "8")
-		assert.ErrorIs(t, ServerParseUpgradeRequest(req), ErrVersion)
+		offered, err := ServerValidateUpgradeRequest(req)
+		assert.ErrorIs(t, err, ErrVersion)
+		assert.Nil(t, offered)
 	})
 
 	t.Run("rejects missing key", func(t *testing.T) {
 		req := parseValid(t)
 		req.Header.Del("Sec-WebSocket-Key")
-		assert.ErrorIs(t, ServerParseUpgradeRequest(req), ErrKey)
+		offered, err := ServerValidateUpgradeRequest(req)
+		assert.ErrorIs(t, err, ErrKey)
+		assert.Nil(t, offered)
 	})
 
 	t.Run("rejects key with wrong decoded length", func(t *testing.T) {
 		req := parseValid(t)
 		req.Header.Set("Sec-WebSocket-Key", "AAAA")
-		assert.ErrorIs(t, ServerParseUpgradeRequest(req), ErrKey)
+		offered, err := ServerValidateUpgradeRequest(req)
+		assert.ErrorIs(t, err, ErrKey)
+		assert.Nil(t, offered)
 	})
 
 	t.Run("rejects invalid base64 key", func(t *testing.T) {
 		req := parseValid(t)
 		req.Header.Set("Sec-WebSocket-Key", "!!!invalid!!!")
-		assert.ErrorIs(t, ServerParseUpgradeRequest(req), ErrKey)
+		offered, err := ServerValidateUpgradeRequest(req)
+		assert.ErrorIs(t, err, ErrKey)
+		assert.Nil(t, offered)
+	})
+
+	t.Run("returns the offered subprotocols", func(t *testing.T) {
+		cases := []struct {
+			name   string
+			values []string
+			expect UpgradeOfferedSubprotocols
+		}{{
+			name:   "single value",
+			values: []string{"ndt7"},
+			expect: UpgradeOfferedSubprotocols{"ndt7"},
+		}, {
+			name:   "comma separated list preserving order",
+			values: []string{"ndt7, ndt5,ndt8"},
+			expect: UpgradeOfferedSubprotocols{"ndt7", "ndt5", "ndt8"},
+		}, {
+			name:   "multiple header lines",
+			values: []string{"ndt7", "ndt5, ndt8"},
+			expect: UpgradeOfferedSubprotocols{"ndt7", "ndt5", "ndt8"},
+		}, {
+			name:   "skips empty elements",
+			values: []string{",ndt7, ,, ndt5,", ""},
+			expect: UpgradeOfferedSubprotocols{"ndt7", "ndt5"},
+		}, {
+			name:   "filters out invalid tokens",
+			values: []string{"ndt7, bad/token, not valid, ndt5"},
+			expect: UpgradeOfferedSubprotocols{"ndt7", "ndt5"},
+		}, {
+			name:   "filters out duplicates",
+			values: []string{"ndt7, ndt5", "ndt7"},
+			expect: UpgradeOfferedSubprotocols{"ndt7", "ndt5"},
+		}, {
+			name:   "keeps values differing only by case",
+			values: []string{"ndt7, NDT7"},
+			expect: UpgradeOfferedSubprotocols{"ndt7", "NDT7"},
+		}, {
+			name:   "only invalid values",
+			values: []string{"bad/token, ,"},
+			expect: UpgradeOfferedSubprotocols{},
+		}}
+
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				req := parseValid(t)
+				for _, v := range tc.values {
+					req.Header.Add("Sec-WebSocket-Protocol", v)
+				}
+				offered, err := ServerValidateUpgradeRequest(req)
+				require.NoError(t, err)
+				assert.Equal(t, tc.expect, offered)
+			})
+		}
+	})
+}
+
+func TestUpgradeOfferedSubprotocols(t *testing.T) {
+	t.Run("Contains", func(t *testing.T) {
+		offered := UpgradeOfferedSubprotocols{"ndt7", "ndt5"}
+		assert.True(t, offered.Contains("ndt7"))
+		assert.True(t, offered.Contains("ndt5"))
+		assert.False(t, offered.Contains("NDT7"))
+		assert.False(t, offered.Contains("ndt"))
+		assert.False(t, offered.Contains(""))
+	})
+
+	t.Run("Contains with empty list", func(t *testing.T) {
+		assert.False(t, UpgradeOfferedSubprotocols{}.Contains("ndt7"))
+		assert.False(t, UpgradeOfferedSubprotocols(nil).Contains("ndt7"))
+	})
+}
+
+func TestServerParseUpgradeRequest(t *testing.T) {
+	t.Run("valid request succeeds", func(t *testing.T) {
+		req, err := http.ReadRequest(readerFor(validUpgradeRequestWithProtocols("ndt7")))
+		require.NoError(t, err)
+		assert.NoError(t, ServerParseUpgradeRequest(req))
+	})
+
+	t.Run("propagates validation error", func(t *testing.T) {
+		req, err := http.ReadRequest(readerFor(validUpgradeRequest()))
+		require.NoError(t, err)
+		req.Method = http.MethodPost
+		assert.ErrorIs(t, ServerParseUpgradeRequest(req), ErrMethod)
 	})
 }
 
@@ -270,7 +369,7 @@ func TestServerReadUpgradeRequest(t *testing.T) {
 
 func TestServerAcceptUpgradeRequest(t *testing.T) {
 	t.Run("writes valid 101 response", func(t *testing.T) {
-		req, err := ServerReadUpgradeRequest(readerFor(validUpgradeRequest()))
+		req, err := http.ReadRequest(readerFor(validUpgradeRequest()))
 		assert.NoError(t, err)
 
 		var buf bytes.Buffer
@@ -291,7 +390,7 @@ func TestServerAcceptUpgradeRequest(t *testing.T) {
 	})
 
 	t.Run("includes valid subprotocol", func(t *testing.T) {
-		req, err := ServerReadUpgradeRequest(readerFor(validUpgradeRequestWithProtocols("chat")))
+		req, err := http.ReadRequest(readerFor(validUpgradeRequestWithProtocols("chat")))
 		assert.NoError(t, err)
 
 		var buf bytes.Buffer
@@ -307,7 +406,7 @@ func TestServerAcceptUpgradeRequest(t *testing.T) {
 	})
 
 	t.Run("picks one from a multi-value offer", func(t *testing.T) {
-		req, err := ServerReadUpgradeRequest(readerFor(validUpgradeRequestWithProtocols("chat, json")))
+		req, err := http.ReadRequest(readerFor(validUpgradeRequestWithProtocols("chat, json")))
 		assert.NoError(t, err)
 
 		var buf bytes.Buffer
@@ -317,7 +416,7 @@ func TestServerAcceptUpgradeRequest(t *testing.T) {
 	})
 
 	t.Run("rejects subprotocol not in client offer", func(t *testing.T) {
-		req, err := ServerReadUpgradeRequest(readerFor(validUpgradeRequest()))
+		req, err := http.ReadRequest(readerFor(validUpgradeRequest()))
 		assert.NoError(t, err)
 
 		var buf bytes.Buffer
@@ -327,7 +426,7 @@ func TestServerAcceptUpgradeRequest(t *testing.T) {
 	})
 
 	t.Run("rejects subprotocol with different casing than offer", func(t *testing.T) {
-		req, err := ServerReadUpgradeRequest(readerFor(validUpgradeRequestWithProtocols("chat")))
+		req, err := http.ReadRequest(readerFor(validUpgradeRequestWithProtocols("chat")))
 		assert.NoError(t, err)
 
 		var buf bytes.Buffer
@@ -337,7 +436,7 @@ func TestServerAcceptUpgradeRequest(t *testing.T) {
 	})
 
 	t.Run("rejects invalid subprotocol token", func(t *testing.T) {
-		req, err := ServerReadUpgradeRequest(readerFor(validUpgradeRequest()))
+		req, err := http.ReadRequest(readerFor(validUpgradeRequest()))
 		assert.NoError(t, err)
 
 		var buf bytes.Buffer
@@ -347,7 +446,7 @@ func TestServerAcceptUpgradeRequest(t *testing.T) {
 	})
 
 	t.Run("propagates write error", func(t *testing.T) {
-		req, err := ServerReadUpgradeRequest(readerFor(validUpgradeRequest()))
+		req, err := http.ReadRequest(readerFor(validUpgradeRequest()))
 		assert.NoError(t, err)
 
 		client, server := net.Pipe()

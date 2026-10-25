@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"net/url"
-	"strings"
 
 	"github.com/bassosimone/llws"
 	"github.com/bassosimone/runtimex"
@@ -167,11 +167,12 @@ func Example_handshakeWithSubprotocol() {
 		rw := llws.NewReadWriter(server)
 
 		// Read and validate the client's upgrade request
-		req := runtimex.PanicOnError1(llws.ServerReadUpgradeRequest(rw.Reader))
+		req := runtimex.PanicOnError1(http.ReadRequest(rw.Reader))
+		offered := runtimex.PanicOnError1(llws.ServerValidateUpgradeRequest(req))
 
-		// The server inspects the requested subprotocols and picks one
-		protos := strings.Split(req.Header.Get("Sec-WebSocket-Protocol"), ",")
-		chosen := strings.TrimSpace(protos[0])
+		// The server checks whether the client offered the subprotocol it wants
+		const chosen = "ndt7"
+		runtimex.Assert(offered.Contains(chosen))
 
 		// Accept the upgrade with the chosen subprotocol
 		runtimex.PanicOnError0(llws.ServerAcceptUpgradeRequest(rw.Writer, req, chosen))
@@ -234,7 +235,8 @@ func Example_fixedSizeDataFlow() {
 	// Receiver (server): handshake, shed bufio, fast-path read loop.
 	defer server.Close()
 	rw := llws.NewReadWriter(server)
-	req := runtimex.PanicOnError1(llws.ServerReadUpgradeRequest(rw.Reader))
+	req := runtimex.PanicOnError1(http.ReadRequest(rw.Reader))
+	_ = runtimex.PanicOnError1(llws.ServerValidateUpgradeRequest(req))
 	runtimex.PanicOnError0(llws.ServerAcceptUpgradeRequest(rw.Writer, req, ""))
 
 	runtimex.Assert(rw.Reader.Buffered() == 0)
